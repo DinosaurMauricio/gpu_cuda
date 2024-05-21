@@ -7,9 +7,8 @@
 #define FORMAT_SPECIFIER "\t%d"
 #endif
 
-void flush_cache();
 void printMatrix(DATA_TYPE **array, int size, const char *message);
 void initializeMatrixValues(DATA_TYPE **matrix, int size);
 DATA_TYPE** createMatrix(int size);
-double calculate_effective_bandwidth(int size, double time);
+void calculate_effective_bandwidth(const DATA_TYPE *ref, const DATA_TYPE *res, int size, float time);
 

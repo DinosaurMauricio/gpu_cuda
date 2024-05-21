@@ -1,6 +1,6 @@
-# GPU Computing: Homework 1
+# GPU Computing: Homework 2
 
-This repository contains the code and results for Homework 1 of the GPU Computing course. The homework focuses on analyzing the performance of a matrix transposition algorithm using different optimization levels and cache behavior analysis.
+This repository contains the code and results for Homework 2 of the GPU Computing course. The homework focuses on analyzing the performance of a matrix transposition algorithm using CUDA.
 
 ## Makefile 
 Use the Makefile to compile and run the program with specific options. Here's how you can use it

@@ -21,9 +21,6 @@ cudaError_t checkCuda(cudaError_t result)
 
 const int TILE_DIM = 32;
 const int BLOCK_ROWS = 8;
-const int NUM_REPS = 100;
-
-
 
 __global__ void copy(DATA_TYPE *odata, const DATA_TYPE *idata)
 {
@@ -37,21 +34,20 @@ __global__ void copy(DATA_TYPE *odata, const DATA_TYPE *idata)
 
 int main(int argc, char *argv[])
 {
-
     int matrixSize = -1;
-    //int numberOfTests = -1;
+    int numberOfTests = -1;
     int blockSize = -1;
 
     if (argc < 2)
     {
         printf("No matrix size or number of tries was provided. Defaulting to 1. \n");
         matrixSize = 1;
-        //numberOfTests = 1;
+        numberOfTests = 1;
     }
     else
     {
         matrixSize = atoi(argv[1]);
-        //numberOfTests = atoi(argv[2]);
+        numberOfTests = atoi(argv[2]);
         if (argc >= 4) 
         {
             if (strcmp(argv[argc - 1], "--valgrind") != 0)
@@ -79,9 +75,9 @@ int main(int argc, char *argv[])
         exit(1);
         
     }
-    const int mem_size = size*sizeof(DATA_TYPE);
+    const int mem_size = size*size*sizeof(DATA_TYPE);
 
-    dim3 dimGrid(matrixSize/TILE_DIM, matrixSize/TILE_DIM, 1);
+    dim3 dimGrid(size/TILE_DIM, size/TILE_DIM, 1);
     dim3 dimBlock(TILE_DIM, BLOCK_ROWS, 1);
 
     printf("Matrix size: %d %d, Block size: %d %d, Tile size: %d %d\n", 
@@ -91,24 +87,35 @@ int main(int argc, char *argv[])
 
     DATA_TYPE *h_idata = (DATA_TYPE*)malloc(mem_size);
     DATA_TYPE *h_cdata = (DATA_TYPE*)malloc(mem_size);
-    DATA_TYPE *h_tdata = (DATA_TYPE*)malloc(mem_size);
     DATA_TYPE *gold    = (DATA_TYPE*)malloc(mem_size);
 
 
-    DATA_TYPE *d_idata, *d_cdata, *d_tdata;
+    DATA_TYPE *d_idata, *d_cdata;
     checkCuda( cudaMalloc(&d_idata, mem_size) );
     checkCuda( cudaMalloc(&d_cdata, mem_size) );
-    checkCuda( cudaMalloc(&d_tdata, mem_size) );
 
-    for (int j = 0; j < matrixSize; j++)
-        for (int i = 0; i < matrixSize; i++)
-        h_idata[j*matrixSize + i] = j*matrixSize + i;
+    for (int j = 0; j < size; j++)
+        for (int i = 0; i < size; i++)
+        h_idata[j*size + i] = j*size + i;
+
+    for (int j = 0; j < size; j++) {
+        for (int i = 0; i < size; i++) {
+            printf(FORMAT_SPECIFIER, h_idata[j * size + i]);
+        }
+        printf("\n");
+    }
 
     // correct result for error checking
-    for (int j = 0; j < matrixSize; j++)
-        for (int i = 0; i < matrixSize; i++)
-        gold[j*matrixSize + i] = h_idata[i*matrixSize + j];
+    for (int j = 0; j < size; j++)
+        for (int i = 0; i < size; i++)
+        gold[j*size + i] = h_idata[i*size + j];
 
+        for (int j = 0; j < size; j++) {
+        for (int i = 0; i < size; i++) {
+            printf(FORMAT_SPECIFIER, gold[j * size + i]);
+        }
+        printf("\n");
+    }
     cudaEvent_t startEvent, stopEvent;
     checkCuda( cudaEventCreate(&startEvent) );
     checkCuda( cudaEventCreate(&stopEvent) );
@@ -122,21 +129,19 @@ int main(int argc, char *argv[])
     // warm up
     copy<<<dimGrid, dimBlock>>>(d_cdata, d_idata);
     checkCuda( cudaEventRecord(startEvent, 0) );
-    for (int i = 0; i < NUM_REPS; i++)
+    for (int i = 0; i < numberOfTests; i++)
         copy<<<dimGrid, dimBlock>>>(d_cdata, d_idata);
     checkCuda( cudaEventRecord(stopEvent, 0) );
     checkCuda( cudaEventSynchronize(stopEvent) );
     checkCuda( cudaEventElapsedTime(&ms, startEvent, stopEvent) );
     checkCuda( cudaMemcpy(h_cdata, d_cdata, mem_size, cudaMemcpyDeviceToHost) );
-    postprocess(h_idata, h_cdata, size, ms);
+    calculate_effective_bandwidth(h_idata, h_cdata, size, ms);
 
     checkCuda( cudaEventDestroy(startEvent) );
     checkCuda( cudaEventDestroy(stopEvent) );
-    checkCuda( cudaFree(d_tdata) );
     checkCuda( cudaFree(d_cdata) );
     checkCuda( cudaFree(d_idata) );
     free(h_idata);
-    free(h_tdata);
     free(h_cdata);
     free(gold);
 }
