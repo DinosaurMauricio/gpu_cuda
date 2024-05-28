@@ -159,42 +159,12 @@ int main(int argc, char **argv)
     
     printf("%25s%25s\n", "Routine", "Bandwidth (GB/s)");
 
-    for(int i = 8; i < 256; i*=2)
-    {
-      for(int j = 32; j < 1024; j*=2)
-      {
-          // i is block rows
-          // j is tile dimension
-          dim3 dimGrid(size/j, size/j, 1);
-          dim3 dimBlock(j, i, 1);
-
-          if (size % i != 0) 
-          {
-              printf("Block size must be a multiple of the matrix size.\n");
-              exit(1);
-              
-          }
-
-          if (j % i) {
-              printf("TILE_DIM must be a multiple of BLOCK_ROWS\n");
-              exit(1);
-          }
-
-          printf("Block size: %d %d, Tile size: %d %d\n", j, i, j, j);
-          printf("dimGrid: %d %d %d. dimBlock: %d %d %d\n",
-            dimGrid.x, dimGrid.y, dimGrid.z, dimBlock.x, dimBlock.y, dimBlock.z);
-
-          runKernelAndMeasure("Unroll", transposeNoBankConflictsUnrolled, dimGrid, dimBlock, 
-                        d_cdata, d_idata, h_cdata, memory_size, size, numberOfTests, startEvent, stopEvent);
-      }
-    }
-
     // Run the kernels using the template function
-    /*runKernelAndMeasure("transposeNoBankConflicts", transposeNoBankConflicts, dimGrid, dimBlock, 
+    runKernelAndMeasure("transposeNoBankConflicts", transposeNoBankConflicts, dimGrid, dimBlock, 
                         d_cdata, d_idata, h_cdata, gold, memory_size, size, numberOfTests, startEvent, stopEvent);
 
     runKernelAndMeasure("Unroll", transposeNoBankConflictsUnrolled, dimGrid, dimBlock, 
-                        d_cdata, d_idata, h_cdata, gold, memory_size, size, numberOfTests, startEvent, stopEvent);*/
+                        d_cdata, d_idata, h_cdata, gold, memory_size, size, numberOfTests, startEvent, stopEvent);
 
     // cleanup
     checkCuda( cudaEventDestroy(startEvent) );
