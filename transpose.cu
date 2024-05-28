@@ -73,7 +73,7 @@ __global__ void transposeNoBankConflictsUnrolled(DATA_TYPE *odata, const DATA_TY
 // Function pointer type for the kernels
 template <typename KernelFunc>
 void runKernelAndMeasure(const char* kernelName, KernelFunc kernel, dim3 dimGrid, dim3 dimBlock, 
-                         DATA_TYPE* d_cdata, const DATA_TYPE* d_idata, DATA_TYPE* h_cdata, DATA_TYPE* gold, 
+                         DATA_TYPE* d_cdata, const DATA_TYPE* d_idata, DATA_TYPE* h_cdata, 
                          size_t memory_size, size_t size, int numberOfTests, cudaEvent_t startEvent, 
                          cudaEvent_t stopEvent) 
 {
@@ -90,7 +90,7 @@ void runKernelAndMeasure(const char* kernelName, KernelFunc kernel, dim3 dimGrid
     checkCuda(cudaEventSynchronize(stopEvent));
     checkCuda(cudaEventElapsedTime(&ms, startEvent, stopEvent));
     checkCuda(cudaMemcpy(h_cdata, d_cdata, memory_size, cudaMemcpyDeviceToHost));
-    calculate_effective_bandwidth(gold, h_cdata, size * size, numberOfTests, ms);
+    calculate_effective_bandwidth(size * size, numberOfTests, ms);
     printf("%25s %f ms\n", "Time:", ms);
 }
 
@@ -103,20 +103,14 @@ int main(int argc, char **argv)
 
     if (argc < 2)
     {
-        printf("No matrix size or number of tries was provided. Defaulting to 1. \n");
-        matrixSize = 1;
+        printf("No matrix size or number of tries was provided. Defaulting to 10. \n");
+        matrixSize = 10;
         numberOfTests = 100;
     }
     else
     {
         matrixSize = atoi(argv[1]);
         numberOfTests = atoi(argv[2]);
-        if (argc >= 4) 
-        {
-            if (strcmp(argv[argc - 1], "--valgrind") != 0)
-            {
-            }
-        }
     }
 
     int size = pow(2, matrixSize);
@@ -146,7 +140,6 @@ int main(int argc, char **argv)
 
     DATA_TYPE *h_idata = (DATA_TYPE*)malloc(memory_size);
     DATA_TYPE *h_cdata = (DATA_TYPE*)malloc(memory_size);
-    DATA_TYPE *gold    = (DATA_TYPE*)malloc(memory_size);
     DATA_TYPE *d_idata, *d_cdata;
 
     cudaEvent_t startEvent, stopEvent;
@@ -156,7 +149,6 @@ int main(int argc, char **argv)
 
         
     initializeMatrixValues(h_idata,size);
-    host_transpose(h_idata, gold, size);
     
     // events for timing
     checkCuda( cudaEventCreate(&startEvent) );
@@ -167,12 +159,42 @@ int main(int argc, char **argv)
     
     printf("%25s%25s\n", "Routine", "Bandwidth (GB/s)");
 
+    for(int i = 8; i < 256; i*=2)
+    {
+      for(int j = 32; j < 1024; j*=2)
+      {
+          // i is block rows
+          // j is tile dimension
+          dim3 dimGrid(size/j, size/j, 1);
+          dim3 dimBlock(j, i, 1);
+
+          if (size % i != 0) 
+          {
+              printf("Block size must be a multiple of the matrix size.\n");
+              exit(1);
+              
+          }
+
+          if (j % i) {
+              printf("TILE_DIM must be a multiple of BLOCK_ROWS\n");
+              exit(1);
+          }
+
+          printf("Block size: %d %d, Tile size: %d %d\n", j, i, j, j);
+          printf("dimGrid: %d %d %d. dimBlock: %d %d %d\n",
+            dimGrid.x, dimGrid.y, dimGrid.z, dimBlock.x, dimBlock.y, dimBlock.z);
+
+          runKernelAndMeasure("Unroll", transposeNoBankConflictsUnrolled, dimGrid, dimBlock, 
+                        d_cdata, d_idata, h_cdata, memory_size, size, numberOfTests, startEvent, stopEvent);
+      }
+    }
+
     // Run the kernels using the template function
-    runKernelAndMeasure("transposeNoBankConflicts", transposeNoBankConflicts, dimGrid, dimBlock, 
+    /*runKernelAndMeasure("transposeNoBankConflicts", transposeNoBankConflicts, dimGrid, dimBlock, 
                         d_cdata, d_idata, h_cdata, gold, memory_size, size, numberOfTests, startEvent, stopEvent);
 
     runKernelAndMeasure("Unroll", transposeNoBankConflictsUnrolled, dimGrid, dimBlock, 
-                        d_cdata, d_idata, h_cdata, gold, memory_size, size, numberOfTests, startEvent, stopEvent);
+                        d_cdata, d_idata, h_cdata, gold, memory_size, size, numberOfTests, startEvent, stopEvent);*/
 
     // cleanup
     checkCuda( cudaEventDestroy(startEvent) );
@@ -180,6 +202,5 @@ int main(int argc, char **argv)
     checkCuda( cudaFree(d_cdata) );
     checkCuda( cudaFree(d_idata) );
     free(h_idata);
-    free(h_cdata);
-    free(gold);
+    free(h_cdata);;
 }
