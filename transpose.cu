@@ -161,10 +161,10 @@ int main(int argc, char **argv)
 
     // Run the kernels using the template function
     runKernelAndMeasure("transposeNoBankConflicts", transposeNoBankConflicts, dimGrid, dimBlock, 
-                        d_cdata, d_idata, h_cdata, gold, memory_size, size, numberOfTests, startEvent, stopEvent);
+                        d_cdata, d_idata, h_cdata, memory_size, size, numberOfTests, startEvent, stopEvent);
 
     runKernelAndMeasure("Unroll", transposeNoBankConflictsUnrolled, dimGrid, dimBlock, 
-                        d_cdata, d_idata, h_cdata, gold, memory_size, size, numberOfTests, startEvent, stopEvent);
+                        d_cdata, d_idata, h_cdata, memory_size, size, numberOfTests, startEvent, stopEvent);
 
     // cleanup
     checkCuda( cudaEventDestroy(startEvent) );
