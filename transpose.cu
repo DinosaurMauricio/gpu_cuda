@@ -1,7 +1,6 @@
 #include <stdio.h>
+#include <assert.h>
 #include <math.h>
-#include <cuda_runtime.h>
-#include "./include/helper_cuda.h"
 
 extern "C" {
 #include "my_library.h"
@@ -19,30 +18,94 @@ cudaError_t checkCuda(cudaError_t result)
   return result;
 }
 
-const int TILE_DIM = 32;
-const int BLOCK_ROWS = 8;
+#ifndef TILE_DIM
+#define TILE_DIM 32
+#endif
 
-__global__ void copy(DATA_TYPE *odata, const DATA_TYPE *idata)
+#ifndef BLOCK_ROWS
+#define BLOCK_ROWS 8
+#endif
+  
+__global__ void transposeNoBankConflicts(DATA_TYPE *odata, const DATA_TYPE *idata)
 {
+  __shared__ DATA_TYPE tile[TILE_DIM][TILE_DIM+1];
+    
   int x = blockIdx.x * TILE_DIM + threadIdx.x;
   int y = blockIdx.y * TILE_DIM + threadIdx.y;
   int width = gridDim.x * TILE_DIM;
 
-  for (int j = 0; j < TILE_DIM; j+= BLOCK_ROWS)
-    odata[(y+j)*width + x] = idata[(y+j)*width + x];
+  for (int j = 0; j < TILE_DIM; j += BLOCK_ROWS)
+     tile[threadIdx.y+j][threadIdx.x] = idata[(y+j)*width + x];
+
+  __syncthreads();
+
+  x = blockIdx.y * TILE_DIM + threadIdx.x;  // transpose block offset
+  y = blockIdx.x * TILE_DIM + threadIdx.y;
+
+  for (int j = 0; j < TILE_DIM; j += BLOCK_ROWS)
+     odata[(y+j)*width + x] = tile[threadIdx.x][threadIdx.y + j];
 }
 
-int main(int argc, char *argv[])
+__global__ void transposeNoBankConflictsUnrolled(DATA_TYPE *odata, const DATA_TYPE *idata)
+{
+  __shared__ DATA_TYPE tile[TILE_DIM][TILE_DIM+1];
+    
+  int x = blockIdx.x * TILE_DIM + threadIdx.x;
+  int y = blockIdx.y * TILE_DIM + threadIdx.y;
+  int width = gridDim.x * TILE_DIM;
+
+  #pragma unroll
+  for (int j = 0; j < TILE_DIM; j += BLOCK_ROWS)
+     tile[threadIdx.y+j][threadIdx.x] = idata[(y+j)*width + x];
+
+  __syncthreads();
+
+  x = blockIdx.y * TILE_DIM + threadIdx.x;  // transpose block offset
+  y = blockIdx.x * TILE_DIM + threadIdx.y;
+
+
+  #pragma unroll
+  for (int j = 0; j < TILE_DIM; j += BLOCK_ROWS)
+     odata[(y+j)*width + x] = tile[threadIdx.x][threadIdx.y + j];
+}
+
+
+// Function pointer type for the kernels
+template <typename KernelFunc>
+void runKernelAndMeasure(const char* kernelName, KernelFunc kernel, dim3 dimGrid, dim3 dimBlock, 
+                         DATA_TYPE* d_cdata, const DATA_TYPE* d_idata, DATA_TYPE* h_cdata, DATA_TYPE* gold, 
+                         size_t memory_size, size_t size, int numberOfTests, cudaEvent_t startEvent, 
+                         cudaEvent_t stopEvent) 
+{
+    float ms;
+    printf("%25s", kernelName);
+    checkCuda(cudaMemset(d_cdata, 0, memory_size));
+
+    // Warm up
+    kernel<<<dimGrid, dimBlock>>>(d_cdata, d_idata);
+    checkCuda(cudaEventRecord(startEvent, 0));
+    for (int i = 0; i < numberOfTests; i++)
+        kernel<<<dimGrid, dimBlock>>>(d_cdata, d_idata);
+    checkCuda(cudaEventRecord(stopEvent, 0));
+    checkCuda(cudaEventSynchronize(stopEvent));
+    checkCuda(cudaEventElapsedTime(&ms, startEvent, stopEvent));
+    checkCuda(cudaMemcpy(h_cdata, d_cdata, memory_size, cudaMemcpyDeviceToHost));
+    calculate_effective_bandwidth(gold, h_cdata, size * size, numberOfTests, ms);
+    printf("%25s %f ms\n", "Time:", ms);
+}
+
+
+
+int main(int argc, char **argv)
 {
     int matrixSize = -1;
     int numberOfTests = -1;
-    int blockSize = -1;
 
     if (argc < 2)
     {
         printf("No matrix size or number of tries was provided. Defaulting to 1. \n");
         matrixSize = 1;
-        numberOfTests = 1;
+        numberOfTests = 100;
     }
     else
     {
@@ -52,91 +115,66 @@ int main(int argc, char *argv[])
         {
             if (strcmp(argv[argc - 1], "--valgrind") != 0)
             {
-                blockSize = atoi(argv[3]);
             }
         }
     }
-    int size = pow(2, matrixSize);
 
+    int size = pow(2, matrixSize);
     printf("The size of the matrix is %dx%d \n",size,size );
 
-    if(blockSize == -1)
-    {
-        printf("No block size was provided. Will work with full matrix \n");
-    }
-    else 
-    {
-        printf("Block size is %d \n", blockSize);
-    }
 
-    if (size % blockSize != 0) 
+    if (size % BLOCK_ROWS != 0) 
     {
         printf("Block size must be a multiple of the matrix size.\n");
         exit(1);
         
     }
-    const int mem_size = size*size*sizeof(DATA_TYPE);
+
+    if (TILE_DIM % BLOCK_ROWS) {
+        printf("TILE_DIM must be a multiple of BLOCK_ROWS\n");
+        exit(1);
+    }
+
+    const int memory_size = size*size*sizeof(DATA_TYPE);
 
     dim3 dimGrid(size/TILE_DIM, size/TILE_DIM, 1);
     dim3 dimBlock(TILE_DIM, BLOCK_ROWS, 1);
 
-    printf("Matrix size: %d %d, Block size: %d %d, Tile size: %d %d\n", 
-         size, size, TILE_DIM, BLOCK_ROWS, TILE_DIM, TILE_DIM);
+    printf("Block size: %d %d, Tile size: %d %d\n", TILE_DIM, BLOCK_ROWS, TILE_DIM, TILE_DIM);
     printf("dimGrid: %d %d %d. dimBlock: %d %d %d\n",
             dimGrid.x, dimGrid.y, dimGrid.z, dimBlock.x, dimBlock.y, dimBlock.z);
 
-    DATA_TYPE *h_idata = (DATA_TYPE*)malloc(mem_size);
-    DATA_TYPE *h_cdata = (DATA_TYPE*)malloc(mem_size);
-    DATA_TYPE *gold    = (DATA_TYPE*)malloc(mem_size);
-
-
+    DATA_TYPE *h_idata = (DATA_TYPE*)malloc(memory_size);
+    DATA_TYPE *h_cdata = (DATA_TYPE*)malloc(memory_size);
+    DATA_TYPE *gold    = (DATA_TYPE*)malloc(memory_size);
     DATA_TYPE *d_idata, *d_cdata;
-    checkCuda( cudaMalloc(&d_idata, mem_size) );
-    checkCuda( cudaMalloc(&d_cdata, mem_size) );
 
-    for (int j = 0; j < size; j++)
-        for (int i = 0; i < size; i++)
-        h_idata[j*size + i] = j*size + i;
-
-    for (int j = 0; j < size; j++) {
-        for (int i = 0; i < size; i++) {
-            printf(FORMAT_SPECIFIER, h_idata[j * size + i]);
-        }
-        printf("\n");
-    }
-
-    // correct result for error checking
-    for (int j = 0; j < size; j++)
-        for (int i = 0; i < size; i++)
-        gold[j*size + i] = h_idata[i*size + j];
-
-        for (int j = 0; j < size; j++) {
-        for (int i = 0; i < size; i++) {
-            printf(FORMAT_SPECIFIER, gold[j * size + i]);
-        }
-        printf("\n");
-    }
     cudaEvent_t startEvent, stopEvent;
+
+    checkCuda( cudaMalloc(&d_idata, memory_size) );
+    checkCuda( cudaMalloc(&d_cdata, memory_size) );
+
+        
+    initializeMatrixValues(h_idata,size);
+    host_transpose(h_idata, gold, size);
+    
+    // events for timing
     checkCuda( cudaEventCreate(&startEvent) );
     checkCuda( cudaEventCreate(&stopEvent) );
-    float ms;
 
-    checkCuda( cudaMemcpy(d_idata, h_idata, mem_size, cudaMemcpyHostToDevice) );
+    // device
+    checkCuda( cudaMemcpy(d_idata, h_idata, memory_size, cudaMemcpyHostToDevice) );
+    
     printf("%25s%25s\n", "Routine", "Bandwidth (GB/s)");
 
-    printf("%25s", "copy");
-    checkCuda( cudaMemset(d_cdata, 0, mem_size) );
-    // warm up
-    copy<<<dimGrid, dimBlock>>>(d_cdata, d_idata);
-    checkCuda( cudaEventRecord(startEvent, 0) );
-    for (int i = 0; i < numberOfTests; i++)
-        copy<<<dimGrid, dimBlock>>>(d_cdata, d_idata);
-    checkCuda( cudaEventRecord(stopEvent, 0) );
-    checkCuda( cudaEventSynchronize(stopEvent) );
-    checkCuda( cudaEventElapsedTime(&ms, startEvent, stopEvent) );
-    checkCuda( cudaMemcpy(h_cdata, d_cdata, mem_size, cudaMemcpyDeviceToHost) );
-    calculate_effective_bandwidth(h_idata, h_cdata, size, ms);
+    // Run the kernels using the template function
+    runKernelAndMeasure("transposeNoBankConflicts", transposeNoBankConflicts, dimGrid, dimBlock, 
+                        d_cdata, d_idata, h_cdata, gold, memory_size, size, numberOfTests, startEvent, stopEvent);
 
+    runKernelAndMeasure("Unroll", transposeNoBankConflictsUnrolled, dimGrid, dimBlock, 
+                        d_cdata, d_idata, h_cdata, gold, memory_size, size, numberOfTests, startEvent, stopEvent);
+
+    // cleanup
     checkCuda( cudaEventDestroy(startEvent) );
     checkCuda( cudaEventDestroy(stopEvent) );
     checkCuda( cudaFree(d_cdata) );
