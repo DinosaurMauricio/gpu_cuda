@@ -40,17 +40,6 @@ void initializeMatrixValues(DATA_TYPE *matrix, int size)
     }
 }
 
-void host_transpose(DATA_TYPE *matrix, DATA_TYPE * transposed_matrix, int size)
-{
-    for (int j = 0; j < size; j++)
-    {
-        for (int i = 0; i < size; i++)
-        {
-            transposed_matrix[j*size + i] = matrix[i*size + j];
-        }
-    }
-}
-
 // Check errors and print GB/s
 void calculate_effective_bandwidth(int size, int number_of_repetitions,float time)
 {
