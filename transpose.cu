@@ -25,7 +25,11 @@ cudaError_t checkCuda(cudaError_t result)
 #ifndef BLOCK_ROWS
 #define BLOCK_ROWS 8
 #endif
-  
+
+#ifdef UNROLL_FLAG
+#define UNROLL_FLAG false
+#endif
+
 __global__ void transposeNoBankConflicts(DATA_TYPE *odata, const DATA_TYPE *idata)
 {
   __shared__ DATA_TYPE tile[TILE_DIM][TILE_DIM+1];
@@ -34,27 +38,9 @@ __global__ void transposeNoBankConflicts(DATA_TYPE *odata, const DATA_TYPE *idat
   int y = blockIdx.y * TILE_DIM + threadIdx.y;
   int width = gridDim.x * TILE_DIM;
 
-  for (int j = 0; j < TILE_DIM; j += BLOCK_ROWS)
-     tile[threadIdx.y+j][threadIdx.x] = idata[(y+j)*width + x];
-
-  __syncthreads();
-
-  x = blockIdx.y * TILE_DIM + threadIdx.x;  // transpose block offset
-  y = blockIdx.x * TILE_DIM + threadIdx.y;
-
-  for (int j = 0; j < TILE_DIM; j += BLOCK_ROWS)
-     odata[(y+j)*width + x] = tile[threadIdx.x][threadIdx.y + j];
-}
-
-__global__ void transposeNoBankConflictsUnrolled(DATA_TYPE *odata, const DATA_TYPE *idata)
-{
-  __shared__ DATA_TYPE tile[TILE_DIM][TILE_DIM+1];
-    
-  int x = blockIdx.x * TILE_DIM + threadIdx.x;
-  int y = blockIdx.y * TILE_DIM + threadIdx.y;
-  int width = gridDim.x * TILE_DIM;
-
+  #if UNROLL_FLAG
   #pragma unroll
+  #endif
   for (int j = 0; j < TILE_DIM; j += BLOCK_ROWS)
      tile[threadIdx.y+j][threadIdx.x] = idata[(y+j)*width + x];
 
@@ -64,7 +50,9 @@ __global__ void transposeNoBankConflictsUnrolled(DATA_TYPE *odata, const DATA_TY
   y = blockIdx.x * TILE_DIM + threadIdx.y;
 
 
+  #if UNROLL_FLAG
   #pragma unroll
+  #endif
   for (int j = 0; j < TILE_DIM; j += BLOCK_ROWS)
      odata[(y+j)*width + x] = tile[threadIdx.x][threadIdx.y + j];
 }
@@ -90,8 +78,9 @@ void runKernelAndMeasure(const char* kernelName, KernelFunc kernel, dim3 dimGrid
     checkCuda(cudaEventSynchronize(stopEvent));
     checkCuda(cudaEventElapsedTime(&ms, startEvent, stopEvent));
     checkCuda(cudaMemcpy(h_cdata, d_cdata, memory_size, cudaMemcpyDeviceToHost));
-    calculate_effective_bandwidth(size * size, numberOfTests, ms);
-    printf("%25s %f ms\n", "Time:", ms);
+    double effective_bw = calculate_effective_bandwidth(size * size, numberOfTests, ms);
+
+    printf("%20.2f %20.2f ms\n",effective_bw, ms);
 }
 
 
@@ -129,10 +118,12 @@ int main(int argc, char **argv)
         exit(1);
     }
 
+
     const int memory_size = size*size*sizeof(DATA_TYPE);
 
     dim3 dimGrid(size/TILE_DIM, size/TILE_DIM, 1);
     dim3 dimBlock(TILE_DIM, BLOCK_ROWS, 1);
+
 
     printf("Block size: %d %d, Tile size: %d %d\n", TILE_DIM, BLOCK_ROWS, TILE_DIM, TILE_DIM);
     printf("dimGrid: %d %d %d. dimBlock: %d %d %d\n",
@@ -142,12 +133,12 @@ int main(int argc, char **argv)
     DATA_TYPE *h_cdata = (DATA_TYPE*)malloc(memory_size);
     DATA_TYPE *d_idata, *d_cdata;
 
+
     cudaEvent_t startEvent, stopEvent;
 
     checkCuda( cudaMalloc(&d_idata, memory_size) );
     checkCuda( cudaMalloc(&d_cdata, memory_size) );
 
-        
     initializeMatrixValues(h_idata,size);
     
     // events for timing
@@ -157,13 +148,10 @@ int main(int argc, char **argv)
     // device
     checkCuda( cudaMemcpy(d_idata, h_idata, memory_size, cudaMemcpyHostToDevice) );
     
-    printf("%25s%25s\n", "Routine", "Bandwidth (GB/s)");
+    printf("%25s%25s%25s\n", "Routine", "Bandwidth (GB/s)", "Time(ms)");
 
     // Run the kernels using the template function
     runKernelAndMeasure("transposeNoBankConflicts", transposeNoBankConflicts, dimGrid, dimBlock, 
-                        d_cdata, d_idata, h_cdata, memory_size, size, numberOfTests, startEvent, stopEvent);
-
-    runKernelAndMeasure("Unroll", transposeNoBankConflictsUnrolled, dimGrid, dimBlock, 
                         d_cdata, d_idata, h_cdata, memory_size, size, numberOfTests, startEvent, stopEvent);
 
     // cleanup

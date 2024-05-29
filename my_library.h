@@ -9,4 +9,4 @@
 
 void printMatrix(DATA_TYPE *array, int size, const char *message);
 void initializeMatrixValues(DATA_TYPE *matrix, int size);
-void calculate_effective_bandwidth(int size, int number_of_repetitions,float time);
+double calculate_effective_bandwidth(int size, int number_of_repetitions,float time);
