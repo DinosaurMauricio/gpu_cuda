@@ -24,7 +24,7 @@ sbatch batch.sh <matrix_size> <number_of_runs>
 <number_of_runs>: Specify the number of runs the kernel should execute per run. Default is 100.
 ```
 
-To run the program with a matrix size of 16x16 and execute 10 times the kernel for the test:
+To run the program with a matrix size of 16x16 and execute 10 times the kernel per trial (in total 5 trials are ran):
 
 ```bash
 sbatch batch.sh  4 10
