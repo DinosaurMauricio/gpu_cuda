@@ -40,7 +40,6 @@ void initializeMatrixValues(DATA_TYPE *matrix, int size)
     }
 }
 
-// Check errors and print GB/s
 double calculate_effective_bandwidth(int size, int number_of_repetitions,float time)
 {
     const int GB_SIZE = 1000000000;
